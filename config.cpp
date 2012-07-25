@@ -178,7 +178,7 @@ namespace parse
     ///////////////////////////////////////////////////////////////////////////
     template <typename Iterator, typename Skipper = config_skipper<Iterator> >
     struct config_grammar
-      : qi::grammar<Iterator, config_struct(), qi::locals<std::string>, Skipper>
+      : qi::grammar<Iterator, config_struct(), Skipper>
     {
         config_grammar()
           : config_grammar::base_type(config, "config")
@@ -221,30 +221,32 @@ namespace parse
             ;
 
             config %=
-                    start_tag[_a = _1]
+                    start_tag
                 >  *item
-                >   end_tag(_a)
+                >   end_tag
             ;
 
             quoted_string %=
-                    '"' > qi::no_skip[*alnum] > '"'
+                    '"'
+                >   qi::skip(qi::no_skip['"' >> *ascii::space >> '"'])[*(alnum|' ')]
+                >   '"'
             ;
 
             quoted_string_list %=
                     lit('(')
-                >>   quoted_string % ','
+                >>  quoted_string % ','
                 >   lit(')')
             ;
 
             double_list %=
                     lit('(')
-                >>   double_ % ','
+                >>  double_ % ','
                 >   lit(')')
             ;
 
             int_list %=
                     lit('(')
-                >>   int_ % ','
+                >>  int_ % ','
                 >   lit(')')
             ;
 
@@ -253,6 +255,8 @@ namespace parse
             key_value_pair.name("key_value_pair");
             quoted_string.name("quoted_string");
             quoted_string_list.name("quoted_string_list");
+            double_list.name("double_list");
+            int_list.name("int_list");
             start_tag.name("start_tag");
             end_tag.name("end_tag");
 
@@ -269,7 +273,7 @@ namespace parse
             );
         }
 
-        qi::rule<Iterator, config_struct(), qi::locals<std::string>, Skipper> config;
+        qi::rule<Iterator, config_struct(), Skipper> config;
         qi::rule<Iterator, config_item(), Skipper> item;
         qi::rule<Iterator, config_key_value_pair(), Skipper> key_value_pair;
         qi::rule<Iterator, std::string(), Skipper> quoted_string;
@@ -277,7 +281,7 @@ namespace parse
         qi::rule<Iterator, std::vector<double>(), Skipper> double_list;
         qi::rule<Iterator, std::vector<int>(), Skipper> int_list;
         qi::rule<Iterator, std::string(), Skipper> start_tag;
-        qi::rule<Iterator, void(std::string), Skipper> end_tag;
+        qi::rule<Iterator, void(), Skipper> end_tag;
     };
 }
 
