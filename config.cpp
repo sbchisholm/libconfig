@@ -19,6 +19,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <map>
 
 namespace parse
 {
@@ -31,6 +32,24 @@ namespace parse
     //  Our config tree representation
     ///////////////////////////////////////////////////////////////////////////
     struct config_struct;
+
+    typedef std::string config_key;
+
+    typedef 
+        boost::make_recursive_variant<
+            std::string
+          , double
+          , int
+          , std::vector<std::string>
+          , std::vector<double>
+          , std::vector<int>
+          , std::map<config_key, boost::recursive_variant_>
+        >::type 
+    config_tree;
+
+    typedef std::map<config_key, config_tree> config_type;
+    typedef config_type::value_type config_pair;
+
 
     typedef
         boost::variant<
@@ -183,6 +202,9 @@ namespace parse
         config_grammar()
           : config_grammar::base_type(config, "config")
         {
+            using qi::skip;
+            using qi::eol;
+            using qi::no_skip;
             using qi::lit;
             using qi::lexeme;
             using qi::on_error;
@@ -192,6 +214,7 @@ namespace parse
             using qi::int_;
             using ascii::char_;
             using ascii::alnum;
+            using ascii::space;
             using ascii::string;
             using namespace qi::labels;
 
@@ -211,7 +234,7 @@ namespace parse
                     lexeme[+(alnum | '_')]
                 >> !lit(':')
                 >   lit('=')
-                >   ( quoted_string | double_ | int_ | quoted_string_list | double_list | int_list )
+                >   ( unesc_str | double_ | int_ | quoted_string_list | double_list | int_list )
                 >   lit(';')
             ;
 
@@ -226,15 +249,33 @@ namespace parse
                 >   end_tag
             ;
 
-            quoted_string %=
+            unesc_char.add("\\a", '\a')("\\b", '\b')("\\f", '\f')("\\n", '\n')
+                          ("\\r", '\r')("\\t", '\t')("\\v", '\v')
+                          ("\\\\", '\\')("\\\'", '\'')("\\\"", '\"')
+            ;
+             
+            unesc_str = 
                     '"'
-                >   qi::skip(qi::no_skip['"' >> *ascii::space >> '"'])[*(alnum|' ')]
+                >>  skip(
+                        no_skip[
+                                '"' 
+                            >>  *( space | ( "//" >> *(char_ - eol) >> eol ) ) 
+                            >>  '"'
+                        ] 
+                    )
+                    [
+                        *( unesc_char | ("\\x" >> qi::hex) | ( char_ - ( char_('"') ) ) )
+                    ]
                 >   '"'
+            ;
+
+            quoted_string %= 
+                    unesc_str
             ;
 
             quoted_string_list %=
                     lit('(')
-                >>  quoted_string % ','
+                >>  unesc_str % ','
                 >   lit(')')
             ;
 
@@ -272,6 +313,9 @@ namespace parse
                     << std::endl
             );
         }
+
+        qi::symbols<char const, char const> unesc_char;
+        qi::rule<Iterator, std::string()> unesc_str;
 
         qi::rule<Iterator, config_struct(), Skipper> config;
         qi::rule<Iterator, config_item(), Skipper> item;
