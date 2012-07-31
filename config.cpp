@@ -29,33 +29,11 @@
 
 namespace parse
 {
-  template<typename key_t, typename mapped_t>
-  struct map : public std::map<key_t, mapped_t>
-  {
-    typedef std::map<key_t, mapped_t> base;
-
-    // Ctors
-    map() : base(){}
-    map(const map& other) : base(other) {}
-
-    std::pair<typename base::iterator,bool> insert( const typename base::value_type& value )
-    {
-      std::cout << "derrived map input function" << std::endl;
-      return base::insert(value);
-    }
-  };
-}
-
-namespace parse
-{
     namespace fusion = boost::fusion;
     namespace phoenix = boost::phoenix;
     namespace qi = boost::spirit::qi;
     namespace ascii = boost::spirit::ascii;
 
-    ///////////////////////////////////////////////////////////////////////////
-    //  Our config tree representation
-    ///////////////////////////////////////////////////////////////////////////
     struct config_struct;
 
     typedef std::string config_key;
