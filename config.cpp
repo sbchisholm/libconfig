@@ -11,8 +11,12 @@
 #include <vector>
 #include <map>
 
+#define BOOST_SPIRIT_USE_PHOENIX_V3
+#include <boost/phoenix/function/adapt_callable.hpp>
+
 #include <boost/config/warning_disable.hpp>
 #include <boost/spirit/include/qi.hpp>
+#include <boost/spirit/include/qi_attr.hpp>
 #include <boost/spirit/include/phoenix_core.hpp>
 #include <boost/spirit/include/phoenix_operator.hpp>
 #include <boost/spirit/include/phoenix_fusion.hpp>
@@ -21,6 +25,7 @@
 #include <boost/fusion/include/adapt_struct.hpp>
 #include <boost/fusion/include/std_pair.hpp>
 
+#include <boost/filesystem.hpp>
 #include <boost/variant/recursive_variant.hpp>
 #include <boost/variant/get.hpp>
 #include <boost/algorithm/string/join.hpp>
@@ -53,6 +58,11 @@ namespace parse
     typedef std::multimap<config_key, config_tree> config_type;
     typedef std::pair<config_key, config_tree> config_pair;
 
+}
+
+namespace config {
+    parse::config_type parse_config_file(std::string filename);
+    std::string expand_includes(std::string base_dir, std::string filename);
 }
 
 namespace parse
@@ -140,8 +150,27 @@ namespace parse
             boost::apply_visitor(config_item_printer(indent), it.second);
         }
     }
-
+    
+    BOOST_PHOENIX_ADAPT_FUNCTION(config_type, parse_config_file, config::parse_config_file, 1);
+    BOOST_PHOENIX_ADAPT_FUNCTION(std::string, expand_includes, config::expand_includes, 1);
+    
     // Define a skipper for white space and comments
+    //template<typename Iterator>
+    //struct config_skipper
+    //  : qi::grammar<Iterator> 
+    //{
+    //    config_skipper() 
+    //      : config_skipper::base_type(skip, "white space and comments") 
+    //    {
+    //        using qi::eol;
+    //        using ascii::char_;
+
+    //        skip = ( ascii::space )
+    //             | ( "//" >> *(char_ - eol) >> eol )
+    //        ;
+    //    }
+    //    qi::rule<Iterator> skip;
+    //};
     template<typename Iterator>
     struct config_skipper
       : qi::grammar<Iterator> 
@@ -151,14 +180,99 @@ namespace parse
         {
             using qi::eol;
             using ascii::char_;
+            using ascii::space;
+            using qi::on_error;
+            using qi::fail;
+            using namespace qi::labels;
+            using phoenix::construct;
+            using phoenix::val;
 
-            skip = ( ascii::space )
-                 | ( "//" >> *(char_ - eol) >> eol )
-            ;
+            skip = space | comment;
+
+            comment = "//" > *((space|char_) - eol) > eol;
+            
+            on_error<fail>
+            (
+                skip
+              , std::cout
+                    << val("Error! Expecting ")
+                    << _4                               // what failed?
+                    << val(" here: \"")
+                    << construct<std::string>(_3, _2)   // iterators to error-pos, end
+                    << val("\"")
+                    << std::endl
+            );
         }
         qi::rule<Iterator> skip;
+        qi::rule<Iterator> comment;
     };
-    
+
+    BOOST_PHOENIX_ADAPT_FUNCTION(std::string, expand_includes, config::expand_includes, 2);
+
+    template<typename Iterator, typename Skipper = config_skipper<Iterator> >
+    struct include_grammar
+      : qi::grammar<Iterator, std::string(), Skipper>
+    {
+        include_grammar(std::string _base_dir)
+          : include_grammar::base_type(config_file, "expand the includes")
+          , base_dir(_base_dir)
+        {
+            using qi::lit;
+            using qi::skip;
+            using qi::eol;
+            using qi::lexeme;
+            using qi::no_skip;
+            using qi::on_error;
+            using qi::fail;
+            using ascii::space;
+            using ascii::char_;
+            using namespace qi::labels;
+            using phoenix::construct;
+            using phoenix::val;
+
+            quoted_string %= 
+                    lexeme['"' >> +(char_ - '"') >> '"'] 
+            ;
+
+            include = 
+                    lit("#include")       
+                >   quoted_string [_val += expand_includes(base_dir, _1)]
+            ;
+
+            config_file %= 
+                    *include
+                >>  no_skip[*char_]
+            ;
+
+            include.name("include");
+            quoted_string.name("quoted_string");
+            config_file.name("config_file");
+            
+            on_error<fail>
+            (
+                config_file
+              , std::cout
+                    << val("Error! Expecting ")
+                    << _4                               // what failed?
+                    << val(" here: \"")
+                    << construct<std::string>(_3, _2)   // iterators to error-pos, end
+                    << val("\"")
+                    << std::endl
+            );
+
+            //BOOST_SPIRIT_DEBUG_NODE(include);
+            //BOOST_SPIRIT_DEBUG_NODE(quoted_string);
+            //BOOST_SPIRIT_DEBUG_NODE(config_file);
+
+        }
+
+        qi::rule<Iterator, std::string(), Skipper> include;
+        qi::rule<Iterator, std::string(), Skipper> quoted_string;
+        qi::rule<Iterator, std::string(), Skipper> config_file;
+
+        std::string base_dir;
+    };
+
 
     ///////////////////////////////////////////////////////////////////////////
     //  Our config grammar definition
@@ -179,6 +293,7 @@ namespace parse
             using qi::fail;
             using qi::double_;
             using qi::int_;
+            using qi::attr;
             using ascii::char_;
             using ascii::alnum;
             using ascii::space;
@@ -189,7 +304,8 @@ namespace parse
             using phoenix::val;
 
             config %=
-                    *section
+                    /**include_pair
+                >   */*item
             ;
 
             item %= 
@@ -292,8 +408,8 @@ namespace parse
             );
 
 
-            BOOST_SPIRIT_DEBUG_NODE(key_value_pair);
-            BOOST_SPIRIT_DEBUG_NODE(section);
+            //BOOST_SPIRIT_DEBUG_NODE(key_value_pair);
+            //BOOST_SPIRIT_DEBUG_NODE(section);
         }
 
         qi::symbols<char const, char const> unesc_char;
@@ -314,6 +430,122 @@ namespace parse
         qi::rule<Iterator, void(), Skipper> end_tag;
     };
 }
+namespace config {
+    std::string file_to_string(std::string filename)
+    {
+      std::ifstream in(filename.c_str(), std::ios_base::in);
+    
+      if (!in) {
+          std::cerr << "Error: Could not open input file: "
+                    << filename << std::endl;
+          return "";
+      }
+    
+      std::string storage; // We will read the contents here.
+      in.unsetf(std::ios::skipws); // No white space skipping!
+      std::copy(
+          std::istream_iterator<char>(in),
+          std::istream_iterator<char>(),
+          std::back_inserter(storage));
+    
+      return storage;
+    }
+    
+    std::string expand_includes(std::string base_dir, std::string filename)
+    {
+      boost::filesystem::path file_path;
+      file_path /= base_dir;
+      file_path /= filename; 
+
+      std::string storage = file_to_string(file_path.string());
+      std::string result;
+
+      typedef parse::include_grammar<std::string::const_iterator> include_grammar;
+      typedef parse::config_skipper<std::string::const_iterator> config_skipper;
+      std::string::const_iterator iter = storage.begin();
+      std::string::const_iterator end = storage.end();
+      include_grammar g(file_path.parent_path().string()); 
+      config_skipper s; // Our skipper
+        
+      std::string parent_path_string = file_path.parent_path().string();
+      bool r = phrase_parse(iter, end, g, s, result);
+      
+      if (r && iter == end)
+      {
+          std::cout << "-------------------------\n";
+          std::cout << "Parsing '" << filename << "' succeeded\n";
+          std::cout << "-------------------------\n";
+      }
+      else
+      {
+          std::cout << "-------------------------\n";
+          std::cout << "Parsing '" << filename << "' failed\n";
+          std::cout << "-------------------------\n";
+      }
+
+      return result;
+    }
+
+    //std::string expand_includes(std::string filename)
+    //{
+    //  std::cout << "expand_includes(\"" << filename << "\")\n";
+    //  std::string storage = file_to_string(filename);
+    //  std::string result;
+
+    //  typedef parse::include_grammar<std::string::const_iterator> include_grammar;
+    //  std::string::const_iterator iter = storage.begin();
+    //  std::string::const_iterator end = storage.end();
+    //  include_grammar ig;
+    //  bool r = phrase_parse(iter, end, ig, result);
+    //  
+    //  if (r && iter == end)
+    //  {
+    //      std::cout << "-------------------------\n";
+    //      std::cout << "Parsing '" << filename << "' succeeded\n";
+    //      std::cout << "-------------------------\n";
+    //  }
+    //  else
+    //  {
+    //      std::cout << "-------------------------\n";
+    //      std::cout << "Parsing '" << filename << "' failed\n";
+    //      std::cout << "-------------------------\n";
+    //  }
+
+    //  return result;
+    //}
+    
+    parse::config_type parse_config_file(std::string filename)
+    {
+      parse::config_type configuration;
+    
+      //std::string storage = file_to_string(filename);
+      std::string storage = config::expand_includes(boost::filesystem::current_path().string(),  filename);
+    
+      typedef parse::config_grammar<std::string::const_iterator> config_grammar;
+      typedef parse::config_skipper<std::string::const_iterator> config_skipper;
+    
+      std::string::const_iterator iter = storage.begin();
+      std::string::const_iterator end = storage.end();
+      config_grammar cg; // Our grammar
+      config_skipper skipper; // Our skipper
+      bool r = phrase_parse(iter, end, cg, skipper, configuration);
+      
+      if (r && iter == end)
+      {
+          std::cout << "-------------------------\n";
+          std::cout << "Parsing '" << filename << "' succeeded\n";
+          std::cout << "-------------------------\n";
+      }
+      else
+      {
+          std::cout << "-------------------------\n";
+          std::cout << "Parsing '" << filename << "' failed\n";
+          std::cout << "-------------------------\n";
+      }
+    
+      return configuration;
+    }
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 //  Main program
@@ -328,53 +560,12 @@ int main(int argc, char **argv)
     else
     {
         std::cerr << "Error: No input file provided." << std::endl;
-        return 1;
+        return (1);
     }
 
-    std::ifstream in(filename, std::ios_base::in);
-
-    if (!in)
-    {
-        std::cerr << "Error: Could not open input file: "
-            << filename << std::endl;
-        return 1;
-    }
-
-    std::string storage; // We will read the contents here.
-    in.unsetf(std::ios::skipws); // No white space skipping!
-    std::copy(
-        std::istream_iterator<char>(in),
-        std::istream_iterator<char>(),
-        std::back_inserter(storage));
-
-    typedef parse::config_grammar<std::string::const_iterator> config_grammar;
-    typedef parse::config_skipper<std::string::const_iterator> config_skipper;
-    config_grammar cg; // Our grammar
-    config_skipper skipper; // Our skipper
-    parse::config_type configuration; // Our tree
-
-    std::string::const_iterator iter = storage.begin();
-    std::string::const_iterator end = storage.end();
-    bool r = phrase_parse(iter, end, cg, skipper, configuration);
-
-    if (r && iter == end)
-    {
-        std::cout << "-------------------------\n";
-        std::cout << "Parsing succeeded\n";
-        std::cout << "-------------------------\n";
-        parse::config_printer()(configuration);
-    
-        return 0;
-    }
-    else
-    {
-        std::cout << "-------------------------\n";
-        std::cout << "Parsing failed\n";
-        std::cout << "-------------------------\n";
-        parse::config_printer()(configuration);
-        return 1;
-    }
-
+    parse::config_type configuration = config::parse_config_file(filename);
+    parse::config_printer()(configuration);
+    return (0);
 }
 
 
