@@ -154,23 +154,6 @@ namespace parse
     BOOST_PHOENIX_ADAPT_FUNCTION(config_type, parse_config_file, config::parse_config_file, 1);
     BOOST_PHOENIX_ADAPT_FUNCTION(std::string, expand_includes, config::expand_includes, 1);
     
-    // Define a skipper for white space and comments
-    //template<typename Iterator>
-    //struct config_skipper
-    //  : qi::grammar<Iterator> 
-    //{
-    //    config_skipper() 
-    //      : config_skipper::base_type(skip, "white space and comments") 
-    //    {
-    //        using qi::eol;
-    //        using ascii::char_;
-
-    //        skip = ( ascii::space )
-    //             | ( "//" >> *(char_ - eol) >> eol )
-    //        ;
-    //    }
-    //    qi::rule<Iterator> skip;
-    //};
     template<typename Iterator>
     struct config_skipper
       : qi::grammar<Iterator> 
@@ -486,34 +469,6 @@ namespace config {
       return result;
     }
 
-    //std::string expand_includes(std::string filename)
-    //{
-    //  std::cout << "expand_includes(\"" << filename << "\")\n";
-    //  std::string storage = file_to_string(filename);
-    //  std::string result;
-
-    //  typedef parse::include_grammar<std::string::const_iterator> include_grammar;
-    //  std::string::const_iterator iter = storage.begin();
-    //  std::string::const_iterator end = storage.end();
-    //  include_grammar ig;
-    //  bool r = phrase_parse(iter, end, ig, result);
-    //  
-    //  if (r && iter == end)
-    //  {
-    //      std::cout << "-------------------------\n";
-    //      std::cout << "Parsing '" << filename << "' succeeded\n";
-    //      std::cout << "-------------------------\n";
-    //  }
-    //  else
-    //  {
-    //      std::cout << "-------------------------\n";
-    //      std::cout << "Parsing '" << filename << "' failed\n";
-    //      std::cout << "-------------------------\n";
-    //  }
-
-    //  return result;
-    //}
-    
     parse::config_type parse_config_file(std::string filename)
     {
       parse::config_type configuration;
