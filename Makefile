@@ -1,8 +1,8 @@
 CC=gcc
 CXX=g++
 RM=rm -f
-CPPFLAGS=-g -Wall
-LDFLAGS=-g 
+CPPFLAGS=-Wall
+LDFLAGS= 
 LDLIBS=-lboost_system -lboost_filesystem
 
 SRCS=config.cpp

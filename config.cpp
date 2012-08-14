@@ -60,7 +60,6 @@ namespace parse
     };
 
     struct config_struct;
-    //struct include_section;
 
     typedef std::string config_key;
     typedef 
@@ -117,8 +116,6 @@ namespace parse
             {
               (*m_map)[m_key] = t;
             }
-
-            //void operator()(std::string)
 
           private:
             map<config_key, config_tree> *m_map;
@@ -604,7 +601,7 @@ namespace config {
     
       //std::string storage = file_to_string(filename);
       std::string storage = (boost::filesystem::path(filename).root_directory().empty()) 
-                          ? config::expand_includes(boost::filesystem::current_path().string(),  filename)
+                          ? config::expand_includes(boost::filesystem::current_path().string(), filename)
                           : config::expand_includes("", filename);
     
       typedef parse::config_grammar<std::string::const_iterator> config_grammar;
