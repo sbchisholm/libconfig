@@ -31,6 +31,7 @@
 #include <boost/algorithm/string/join.hpp>
 #include <boost/foreach.hpp>
 #include <boost/lexical_cast.hpp>
+#include <boost/none.hpp>
 
 namespace parse
 {
@@ -39,29 +40,115 @@ namespace parse
     namespace qi = boost::spirit::qi;
     namespace ascii = boost::spirit::ascii;
 
+    // A map class to overide the functionality of the insert function.
+    template<typename key_t, typename mapped_t>
+    class map : public std::map<key_t, mapped_t> 
+    {
+      private:
+        typedef std::map<key_t, mapped_t> base;
+      public:
+        map() : base() {}
+        map(const map& other) : base(other) {}
+        template<class InputIt> map(InputIt first, InputIt last) : base(first, last) {}
+      public:
+        std::pair<typename base::iterator, bool> insert( const typename base::value_type& value ) 
+        { return base::insert(value); }
+        typename base::iterator insert( typename base::iterator hint, const typename base::value_type& value )
+        { return base::insert(hint, value); }
+        template<class InputIt> void insert( InputIt first, InputIt last ) 
+        { base::insert(first, last); }
+    };
+
     struct config_struct;
+    //struct include_section;
 
     typedef std::string config_key;
-
     typedef 
         boost::make_recursive_variant<
             std::string
           , double
           , int
+          , bool
           , std::vector<std::string>
           , std::vector<double>
           , std::vector<int>
-          , std::multimap<config_key, boost::recursive_variant_>
+          , std::vector<boost::none_t>
+          , map<config_key, boost::recursive_variant_>
         >::type 
     config_tree;
 
-    typedef std::multimap<config_key, config_tree> config_type;
+    typedef map<config_key, config_tree> config_type;
     typedef std::pair<config_key, config_tree> config_pair;
+    
+    // A map class to overide the functionality of the insert function.
+    template<>
+    class map<config_key, config_tree> : public std::map<config_key, config_tree> 
+    {
+      private:
+        typedef std::map<config_key, config_tree> base;
+      public:
+        typedef typename base::iterator iterator;
+
+      private:
+        struct map_inserter : boost::static_visitor<>
+        {
+          public:
+            map_inserter(map<config_key, config_tree> *pointer, config_key const& key) 
+              : m_map(pointer) 
+              , m_key(key)
+            {}
+
+            void operator()(config_type const& t) const
+            {
+              std::map<config_key, config_tree>::iterator it = m_map->find(m_key);
+              if(it == m_map->end()) {
+                m_map->insert(std::make_pair(m_key, t));
+              }
+              else {
+                config_type& node = boost::get<config_type>(it->second);
+                BOOST_FOREACH(config_type::value_type value, t) {
+                  node.insert(node.begin(), value);
+                }
+              }
+            }
+
+            template<typename T> 
+            void operator()(T const& t) const
+            {
+              (*m_map)[m_key] = t;
+            }
+
+            //void operator()(std::string)
+
+          private:
+            map<config_key, config_tree> *m_map;
+            config_key m_key;
+        };
+
+      public:
+        map() : base() {}
+        map(const map& other) : base(other) {}
+        template<class InputIt> map(InputIt first, InputIt last) : base(first, last) {}
+      public:
+        std::pair<typename base::iterator, bool> insert( const typename base::value_type& value ) 
+        {
+          return base::insert(value); 
+        }
+        typename base::iterator insert( typename base::iterator hint, const typename base::value_type& value )
+        {
+          boost::apply_visitor(map_inserter(this, value.first), value.second);
+          return hint;
+        }
+        template<class InputIt> void insert( InputIt first, InputIt last ) 
+        { 
+          base::insert(first, last); 
+        }
+    };
 
 }
 
+
 namespace config {
-    parse::config_type parse_config_file(std::string filename);
     std::string expand_includes(std::string base_dir, std::string filename);
 }
 
@@ -86,6 +173,13 @@ namespace parse
       return oss.str();
     }
     
+    std::string value_to_string(bool const& b)
+    {
+      std::ostringstream oss;
+      b ? oss << "true" : oss << "false";
+      return oss.str();
+    }
+
     std::string value_to_string(std::string const& t)
     {
       std::ostringstream oss;
@@ -151,7 +245,6 @@ namespace parse
         }
     }
     
-    BOOST_PHOENIX_ADAPT_FUNCTION(config_type, parse_config_file, config::parse_config_file, 1);
     BOOST_PHOENIX_ADAPT_FUNCTION(std::string, expand_includes, config::expand_includes, 1);
     
     template<typename Iterator>
@@ -276,6 +369,8 @@ namespace parse
             using qi::fail;
             using qi::double_;
             using qi::int_;
+            using qi::true_;
+            using qi::false_;
             using qi::attr;
             using ascii::char_;
             using ascii::alnum;
@@ -285,14 +380,14 @@ namespace parse
 
             using phoenix::construct;
             using phoenix::val;
+            using phoenix::at_c;
 
             config %=
-                    /**include_pair
-                >   */*item
+                    *item
             ;
 
             item %= 
-                    section | key_value_pair
+                    ( section | key_value_pair | include_section )
             ;
 
             start_tag %=
@@ -306,7 +401,8 @@ namespace parse
                     key
                 >> !lit(':')
                 >   lit('=')
-                >   ( unesc_str | double_ | int_ | quoted_string_list | double_list | int_list )
+                >   ( unesc_str | double_ | int_ | quoted_string_list | 
+                      double_list | int_list | bool_type | empty_list )
                 >   lit(';')
             ;
 
@@ -342,7 +438,8 @@ namespace parse
             ;
             
             key %=
-                    lexeme[+(alnum | '_')];
+                    lexeme[+char_("0-9a-zA-Z_")]
+            ;
 
             quoted_string %= 
                     unesc_str
@@ -366,6 +463,29 @@ namespace parse
                 >   lit(')')
             ;
 
+            empty_list %= 
+                    lit('(') 
+                >>  lit(')')
+            ;
+
+            include_section %= 
+                    attr("$references") 
+                >>  include_section_pair
+            ;
+
+            include_section_pair =
+                    lit("#include_section")
+                    // Store the attr in the second position of the tuple
+                >   quoted_string [at_c<1>(_val) = _1]  
+                >   lit("as")
+                    // store the attr in the first postion of the tuple
+                >   quoted_string [at_c<0>(_val) = _1] 
+            ;
+
+            bool_type %=
+                    true_ | false_
+            ;
+
             config.name("config");
             section.name("section");
             item.name("item");
@@ -377,6 +497,10 @@ namespace parse
             int_list.name("int_list");
             start_tag.name("start_tag");
             end_tag.name("end_tag");
+            include_section.name("include_section");
+            include_section_pair.name("include_section_pair");
+            bool_type.name("bool_type");
+            empty_list.name("empty_list");
 
             on_error<fail>
             (
@@ -403,10 +527,15 @@ namespace parse
         qi::rule<Iterator, config_pair(), Skipper> key_value_pair;
         qi::rule<Iterator, std::pair<config_key, config_type>(), Skipper> section;
 
+        qi::rule<Iterator, std::pair<config_key, config_type>(), Skipper> include_section;
+        qi::rule<Iterator, config_pair(), Skipper> include_section_pair;
+
         qi::rule<Iterator, std::string(), Skipper> quoted_string;
         qi::rule<Iterator, std::vector<std::string>(), Skipper> quoted_string_list;
         qi::rule<Iterator, std::vector<double>(), Skipper> double_list;
         qi::rule<Iterator, std::vector<int>(), Skipper> int_list;
+        qi::rule<Iterator, std::vector<boost::none_t>(), Skipper> empty_list;
+        qi::rule<Iterator, bool(), Skipper> bool_type;
 
         qi::rule<Iterator, std::string(), Skipper> start_tag;
         qi::rule<Iterator, std::string(), Skipper> key;
@@ -448,7 +577,7 @@ namespace config {
       std::string::const_iterator iter = storage.begin();
       std::string::const_iterator end = storage.end();
       include_grammar g(file_path.parent_path().string()); 
-      config_skipper s; // Our skipper
+      config_skipper s; 
         
       std::string parent_path_string = file_path.parent_path().string();
       bool r = phrase_parse(iter, end, g, s, result);
@@ -474,7 +603,9 @@ namespace config {
       parse::config_type configuration;
     
       //std::string storage = file_to_string(filename);
-      std::string storage = config::expand_includes(boost::filesystem::current_path().string(),  filename);
+      std::string storage = (boost::filesystem::path(filename).root_directory().empty()) 
+                          ? config::expand_includes(boost::filesystem::current_path().string(),  filename)
+                          : config::expand_includes("", filename);
     
       typedef parse::config_grammar<std::string::const_iterator> config_grammar;
       typedef parse::config_skipper<std::string::const_iterator> config_skipper;
