@@ -32,6 +32,8 @@
 #include <boost/foreach.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/none.hpp>
+#include <boost/algorithm/string/split.hpp>
+#include <boost/algorithm/string/classification.hpp>
 
 namespace parse
 {
@@ -40,26 +42,9 @@ namespace parse
     namespace qi = boost::spirit::qi;
     namespace ascii = boost::spirit::ascii;
 
-    // A map class to overide the functionality of the insert function.
-    template<typename key_t, typename mapped_t>
-    class map : public std::map<key_t, mapped_t> 
-    {
-      private:
-        typedef std::map<key_t, mapped_t> base;
-      public:
-        map() : base() {}
-        map(const map& other) : base(other) {}
-        template<class InputIt> map(InputIt first, InputIt last) : base(first, last) {}
-      public:
-        std::pair<typename base::iterator, bool> insert( const typename base::value_type& value ) 
-        { return base::insert(value); }
-        typename base::iterator insert( typename base::iterator hint, const typename base::value_type& value )
-        { return base::insert(hint, value); }
-        template<class InputIt> void insert( InputIt first, InputIt last ) 
-        { base::insert(first, last); }
-    };
-
+    template<typename key_t, typename mapped_t> class map;
     struct config_struct;
+    struct config_printer;
 
     typedef std::string config_key;
     typedef 
@@ -147,6 +132,7 @@ namespace parse
 
 namespace config {
     std::string expand_includes(std::string base_dir, std::string filename);
+
 }
 
 namespace parse
@@ -630,6 +616,111 @@ namespace config {
     }
 }
 
+namespace config {
+    class configuration
+    {
+      public:
+        configuration(const parse::config_type& configuration_map)
+          : m_configuration_map(configuration_map)
+        {}
+
+      public:
+        template<typename T>
+        bool lookup_value(const std::string& address, T& value)
+        {
+          std::vector<std::string> keys;
+          boost::split(keys, address, boost::is_any_of("."));
+          return lookup_value(keys, value);
+        }
+
+      private:
+        template<typename T>
+        bool lookup_value(std::vector<std::string>& keys, T& value)
+        {
+          std::vector<std::vector<std::string> > alternates;
+          parse::config_type& current_section = m_configuration_map;
+          parse::config_type::iterator it;
+          
+          for(size_t i = 0; i < keys.size(); ++i) 
+          {
+            std::cout << "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[" << std::endl;
+            parse::config_printer()(current_section);
+            std::cout << "]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]" << std::endl;
+
+            std::cout << "current key: '" << keys[i] << "'" << std::endl;
+            if(i == keys.size() - 1)  
+            {
+              it =  current_section.find(keys[i]);
+              if(it == current_section.end()) {
+                std::cout << "did not find the key, the valid keys are: " << std::endl;
+                //BOOST_FOREACH(parse::config_type::value_type& v, current_section)
+                //  std::cout << "\t'"<< v.first << "' -> " << v.second << std::endl;
+                return false;  // not found
+              }
+              else {
+                try {
+                  value = boost::get<T>(it->second);
+                  return true;
+                }
+                catch(boost::bad_get e) {
+                  std::cout << "found the key but it's not the right type" << std::endl;
+                  return false; // found the key but it's not the right type
+                }
+              }
+            }
+            else 
+            {
+              // look for included sections
+              it = current_section.find("$references");
+              if(it != current_section.end()) {
+                //try {
+                  parse::config_type& refs = boost::get<parse::config_type>(it->second);
+                  it = refs.find(keys[i]);
+                  if(it != refs.end()) {
+                    std::string& section_name = boost::get<std::string>(it->second);
+                    std::vector<std::string> alt_keys;
+                    boost::split(alt_keys, section_name, boost::is_any_of("."));
+                    alt_keys.insert(alt_keys.end(), keys.begin()+i, keys.end());
+                    alternates.push_back(alt_keys);
+                  }
+                //}
+                //catch(boost::bad_get e) {
+                //  throw boost::bad_get();
+                //}
+              }
+              it = current_section.find(keys[i]);
+              if(it == current_section.end()) {
+                std::cout << "didn't find the section, might be in the included sections though, valid keys are:" << std::endl;
+                std::cout << "===" << std::endl;
+                parse::config_printer()(current_section);
+                std::cout << "===" << std::endl;
+                //BOOST_FOREACH(parse::config_type::value_type& v, current_section)
+                //  std::cout << "\t'"<< v.first << << std::endl;
+                break; // not found
+              }
+              else {
+                try {
+                  current_section = boost::get<parse::config_type>(it->second);
+                }
+                catch(boost::bad_get e) {
+                std::cout << "found the key but it's not a section" << std::endl;
+                  return false; // found the key but it's not a section
+                }
+              }
+            }
+          }
+          BOOST_FOREACH(std::vector<std::string>& alternate, alternates)
+            if(lookup_value(alternate, value)) 
+              return true;
+          std::cout << "Done and still not here!" << std::endl;
+          return false;
+        }
+
+      private:
+        parse::config_type m_configuration_map;
+    };
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 //  Main program
 ///////////////////////////////////////////////////////////////////////////////
@@ -646,8 +737,17 @@ int main(int argc, char **argv)
         return (1);
     }
 
-    parse::config_type configuration = config::parse_config_file(filename);
-    parse::config_printer()(configuration);
+    parse::config_type configuration_map = config::parse_config_file(filename);
+    parse::config_printer()(configuration_map);
+
+
+    std::string value;
+    bool found  = config::configuration(configuration_map).lookup_value("CatSim.Section.key", value);
+    if (found)
+      std::cout << "CatSim.another_key: \"" << value << "\"" << std::endl;
+    else
+      std::cout << "CatSim.another_key not found" << std::endl;
+
     return (0);
 }
 
