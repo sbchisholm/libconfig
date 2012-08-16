@@ -630,90 +630,82 @@ namespace config {
         {
           std::vector<std::string> keys;
           boost::split(keys, address, boost::is_any_of("."));
-          return lookup_value(keys, value);
+          return lookup_value(m_configuration_map, m_configuration_map, value, keys);
         }
 
       private:
         template<typename T>
-        bool lookup_value(std::vector<std::string>& keys, T& value)
+        bool get_value(const parse::config_type& sub_config,
+                       const std::string& key, T& value)
         {
-          std::vector<std::vector<std::string> > alternates;
-          parse::config_type& current_section = m_configuration_map;
-          parse::config_type::iterator it;
-          
-          for(size_t i = 0; i < keys.size(); ++i) 
-          {
-            std::cout << "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[" << std::endl;
-            parse::config_printer()(current_section);
-            std::cout << "]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]" << std::endl;
+          if(sub_config.find(key) == sub_config.end())
+            return false;
+          try {
+            value = boost::get<T>(sub_config.find(key)->second);
+          }
+          catch(boost::bad_get e) {
+            throw std::runtime_error("Type requested does not match the configuration item's type.");
+          }
+          return true;
+        }
 
-            std::cout << "current key: '" << keys[i] << "'" << std::endl;
-            if(i == keys.size() - 1)  
-            {
-              it =  current_section.find(keys[i]);
-              if(it == current_section.end()) {
-                std::cout << "did not find the key, the valid keys are: " << std::endl;
-                //BOOST_FOREACH(parse::config_type::value_type& v, current_section)
-                //  std::cout << "\t'"<< v.first << "' -> " << v.second << std::endl;
-                return false;  // not found
-              }
-              else {
-                try {
-                  value = boost::get<T>(it->second);
-                  return true;
-                }
-                catch(boost::bad_get e) {
-                  std::cout << "found the key but it's not the right type" << std::endl;
-                  return false; // found the key but it's not the right type
-                }
+        template<typename T>
+        bool lookup_value(const parse::config_type& full_config,
+                          const parse::config_type& sub_config,
+                          T& value, const std::vector<std::string>& keys, 
+                          size_t keys_idx = 0)
+        {
+          if(keys.size() == keys_idx + 1)
+            return get_value(sub_config, keys[keys_idx], value);
+          
+          //std::cout << "looking for section: " << keys[keys_idx] << std::endl;
+          if(sub_config.find(keys[keys_idx]) != sub_config.end()) 
+          {
+            //std::cout << "found section: " << keys[keys_idx] << std::endl;
+            try {
+              if(lookup_value(full_config,
+                   boost::get<parse::config_type>(sub_config.find(keys[keys_idx])->second),
+                   value, keys, keys_idx + 1)) 
+              {
+                return true;
               }
             }
-            else 
-            {
-              // look for included sections
-              it = current_section.find("$references");
-              if(it != current_section.end()) {
-                //try {
-                  parse::config_type& refs = boost::get<parse::config_type>(it->second);
-                  it = refs.find(keys[i]);
-                  if(it != refs.end()) {
-                    std::string& section_name = boost::get<std::string>(it->second);
-                    std::vector<std::string> alt_keys;
-                    boost::split(alt_keys, section_name, boost::is_any_of("."));
-                    alt_keys.insert(alt_keys.end(), keys.begin()+i, keys.end());
-                    alternates.push_back(alt_keys);
-                  }
-                //}
-                //catch(boost::bad_get e) {
-                //  throw boost::bad_get();
-                //}
-              }
-              it = current_section.find(keys[i]);
-              if(it == current_section.end()) {
-                std::cout << "didn't find the section, might be in the included sections though, valid keys are:" << std::endl;
-                std::cout << "===" << std::endl;
-                parse::config_printer()(current_section);
-                std::cout << "===" << std::endl;
-                //BOOST_FOREACH(parse::config_type::value_type& v, current_section)
-                //  std::cout << "\t'"<< v.first << << std::endl;
-                break; // not found
-              }
-              else {
-                try {
-                  current_section = boost::get<parse::config_type>(it->second);
-                }
-                catch(boost::bad_get e) {
-                std::cout << "found the key but it's not a section" << std::endl;
-                  return false; // found the key but it's not a section
-                }
-              }
+            catch(boost::bad_get e) {
+              throw std::runtime_error("The specified key is not a section");
             }
           }
-          BOOST_FOREACH(std::vector<std::string>& alternate, alternates)
-            if(lookup_value(alternate, value)) 
-              return true;
-          std::cout << "Done and still not here!" << std::endl;
-          return false;
+           
+          boost::optional<std::vector<std::string> > include_section_keys = 
+            find_include_section(sub_config, keys[keys_idx]);
+          if(include_section_keys) 
+            return lookup_value(full_config, full_config, value, 
+                                combine_keys(keys, keys_idx + 1, *include_section_keys));
+          else
+            return false;
+        }
+
+        boost::optional<std::vector<std::string> > 
+        find_include_section(const parse::config_type& sub_config, const std::string& key)
+        {
+          if(sub_config.find("$references") != sub_config.end()) {
+            std::string include_section;
+            std::vector<std::string> include_section_keys;
+            if(lookup_value(boost::get<parse::config_type>(sub_config.find("$references")->second),
+                            boost::get<parse::config_type>(sub_config.find("$references")->second),
+                            include_section, std::vector<std::string>(1, key)))
+              return boost::optional<std::vector<std::string> >(
+                               boost::split(include_section_keys, include_section, boost::is_any_of(".")));
+            else
+              return boost::none;
+          }
+          return boost::none;
+        }
+
+        std::vector<std::string> combine_keys(std::vector<std::string> keys1, size_t keys1_idx, 
+                                              std::vector<std::string> keys2)
+        {
+          keys2.insert(keys2.end(), keys1.begin()+keys1_idx, keys1.end());
+          return keys2;
         }
 
       private:
@@ -727,9 +719,11 @@ namespace config {
 int main(int argc, char **argv)
 {
     char const* filename;
-    if (argc > 1)
+    char const* config_item_address;
+    if (argc > 2)
     {
         filename = argv[1];
+        config_item_address = argv[2];
     }
     else
     {
@@ -742,11 +736,11 @@ int main(int argc, char **argv)
 
 
     std::string value;
-    bool found  = config::configuration(configuration_map).lookup_value("CatSim.Section.key", value);
+    bool found  = config::configuration(configuration_map).lookup_value(config_item_address, value);
     if (found)
-      std::cout << "CatSim.another_key: \"" << value << "\"" << std::endl;
+      std::cout << config_item_address << ": \"" << value << "\"" << std::endl;
     else
-      std::cout << "CatSim.another_key not found" << std::endl;
+      std::cout << config_item_address << " not found" << std::endl;
 
     return (0);
 }
