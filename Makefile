@@ -3,20 +3,20 @@ CXX=g++
 RM=rm -f
 CPPFLAGS=-Wall
 LDFLAGS= 
-LDLIBS=-lboost_system -lboost_filesystem
+LDLIBS=-lboost_system -lboost_filesystem -lboost_regex
 
-SRCS=config.cpp
+SRCS=Main.cpp
 OBJS=$(subst .cpp,.o,$(SRCS))
 
-all: config-parser
+all: test
 
-config-parser: $(OBJS)
-	g++ $(LDFLAGS) -o config-parser $(OBJS) $(LDLIBS) 
+test: $(OBJS)
+	g++ $(LDFLAGS) -o test $(OBJS) $(LDLIBS)
 
-config.o: config.cpp
+Main.o: Main.cpp Libconfig.h Types.h Configuration.h Parse.h Printing.h
 
 clean:
 	$(RM) $(OBJS)
 
 dist-clean: clean
-	$(RM) config-parser
+	$(RM) test

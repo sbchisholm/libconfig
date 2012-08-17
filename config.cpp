@@ -28,10 +28,9 @@
 #include <boost/filesystem.hpp>
 #include <boost/variant/recursive_variant.hpp>
 #include <boost/variant/get.hpp>
-#include <boost/algorithm/string/join.hpp>
 #include <boost/foreach.hpp>
-#include <boost/lexical_cast.hpp>
 #include <boost/none.hpp>
+#include <boost/algorithm/string/join.hpp>
 #include <boost/algorithm/string/split.hpp>
 #include <boost/algorithm/string/classification.hpp>
 
@@ -531,9 +530,7 @@ namespace config {
       std::ifstream in(filename.c_str(), std::ios_base::in);
     
       if (!in) {
-          std::cerr << "Error: Could not open input file: "
-                    << filename << std::endl;
-          return "";
+          throw std::runtime_error("Could not open input file.");
       }
     
       std::string storage; // We will read the contents here.
@@ -573,6 +570,7 @@ namespace config {
       }
       else
       {
+        throw std::runtime_error()
           std::cout << "-------------------------\n";
           std::cout << "Parsing '" << filename << "' failed\n";
           std::cout << "-------------------------\n";
@@ -705,6 +703,8 @@ namespace config {
                                               std::vector<std::string> keys2)
         {
           keys2.insert(keys2.end(), keys1.begin()+keys1_idx, keys1.end());
+          std::cout << "Alternate Key" << std::endl;
+          BOOST_FOREACH
           return keys2;
         }
 
@@ -733,6 +733,7 @@ int main(int argc, char **argv)
 
     parse::config_type configuration_map = config::parse_config_file(filename);
     parse::config_printer()(configuration_map);
+    // libconfig::printing::ConfigPrinter()(configurationMap);
 
 
     std::string value;
