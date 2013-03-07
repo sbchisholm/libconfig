@@ -1,3 +1,5 @@
+// Simple test program
+
 
 #include "Libconfig.h"
 
